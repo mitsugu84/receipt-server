@@ -3,5 +3,3 @@ uvicorn
 openai
 pydantic
 python-multipart
-requests
-openpyxl
