@@ -1,18 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Receipt Server v1
-
+Receipt Server v1 - HEIC対応版
 Render / FastAPI 用サーバー
-
-機能:
-- GET /health
-- POST /analyze
-- 領収書画像を受け取る
-- OpenAI Visionで解析
-- 日付 / 取引先 / 店名 / 金額 / 区分 / メモ をJSONで返す
 """
 
 import base64
+import io
 import json
 import os
 import traceback
@@ -22,10 +15,13 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from pydantic import BaseModel
+from PIL import Image
+from pillow_heif import register_heif_opener
 
 
-APP_NAME = "Receipt Server v1"
+register_heif_opener()
 
+APP_NAME = "Receipt Server v1 HEIC"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini"
 
@@ -43,11 +39,10 @@ DEFAULT_CATEGORIES = [
     "その他",
 ]
 
-
 app = FastAPI(
     title=APP_NAME,
-    version="1.0.0",
-    description="Receipt image analysis server using OpenAI Vision.",
+    version="1.1.0",
+    description="Receipt image analysis server using OpenAI Vision. HEIC supported.",
 )
 
 app.add_middleware(
@@ -79,24 +74,78 @@ def get_openai_client() -> OpenAI:
     return OpenAI(api_key=OPENAI_API_KEY)
 
 
-def guess_mime_type(filename: str, content_type: str | None) -> str:
-    if content_type and content_type.startswith("image/"):
-        return content_type
+def is_heic_file(filename: str, content_type: str | None) -> bool:
+    lower = (filename or "").lower()
+    ctype = (content_type or "").lower()
+    return (
+        lower.endswith(".heic")
+        or lower.endswith(".heif")
+        or "heic" in ctype
+        or "heif" in ctype
+    )
 
-    lower = filename.lower()
 
-    if lower.endswith(".png"):
-        return "image/png"
-    if lower.endswith(".webp"):
-        return "image/webp"
-    if lower.endswith(".bmp"):
-        return "image/bmp"
-    if lower.endswith(".heic") or lower.endswith(".heif"):
-        return "image/heic"
-    if lower.endswith(".jpg") or lower.endswith(".jpeg"):
-        return "image/jpeg"
+def normalize_image_for_openai(
+    image_bytes: bytes,
+    filename: str,
+    content_type: str | None,
+) -> tuple[bytes, str]:
+    """
+    OpenAI Visionが受け付ける形式へ正規化する。
+    対応送信形式:
+    - image/jpeg
+    - image/png
+    - image/gif
+    - image/webp
 
-    return "image/jpeg"
+    HEIC/HEIFや怪しいJPEGはPillowで開いてJPEGへ変換する。
+    """
+    lower = (filename or "").lower()
+    ctype = (content_type or "").lower()
+
+    should_convert = False
+
+    if is_heic_file(filename, content_type):
+        should_convert = True
+    elif lower.endswith(".jpg") or lower.endswith(".jpeg"):
+        should_convert = False
+    elif lower.endswith(".png"):
+        should_convert = False
+    elif lower.endswith(".webp"):
+        should_convert = False
+    elif lower.endswith(".gif"):
+        should_convert = False
+    else:
+        should_convert = True
+
+    if not should_convert:
+        if lower.endswith(".png") or "png" in ctype:
+            return image_bytes, "image/png"
+        if lower.endswith(".webp") or "webp" in ctype:
+            return image_bytes, "image/webp"
+        if lower.endswith(".gif") or "gif" in ctype:
+            return image_bytes, "image/gif"
+        return image_bytes, "image/jpeg"
+
+    try:
+        image = Image.open(io.BytesIO(image_bytes))
+        image.load()
+
+        if image.mode in ("RGBA", "LA", "P"):
+            background = Image.new("RGB", image.size, (255, 255, 255))
+            if image.mode == "P":
+                image = image.convert("RGBA")
+            background.paste(image, mask=image.split()[-1] if image.mode in ("RGBA", "LA") else None)
+            image = background
+        else:
+            image = image.convert("RGB")
+
+        output = io.BytesIO()
+        image.save(output, format="JPEG", quality=92, optimize=True)
+        return output.getvalue(), "image/jpeg"
+
+    except Exception as exc:
+        raise RuntimeError(f"画像変換に失敗しました: {exc}") from exc
 
 
 def bytes_to_data_url(image_bytes: bytes, mime_type: str) -> str:
@@ -105,7 +154,7 @@ def bytes_to_data_url(image_bytes: bytes, mime_type: str) -> str:
 
 
 def parse_json_from_text(text: str) -> dict[str, Any]:
-    text = text.strip()
+    text = (text or "").strip()
 
     if text.startswith("```"):
         text = text.strip("`")
@@ -115,7 +164,7 @@ def parse_json_from_text(text: str) -> dict[str, Any]:
     start = text.find("{")
     end = text.rfind("}")
 
-    if start >= 0 and end >= 0:
+    if start >= 0 and end >= 0 and end > start:
         text = text[start : end + 1]
 
     return json.loads(text)
@@ -130,6 +179,7 @@ def safe_int(value: Any) -> int:
             value = value.replace(",", "")
             value = value.replace("円", "")
             value = value.replace("¥", "")
+            value = value.replace("￥", "")
             value = value.strip()
 
         return int(float(value))
@@ -215,8 +265,13 @@ def analyze_receipt_image(
 ) -> ReceiptResult:
     client = get_openai_client()
 
-    mime_type = guess_mime_type(filename, content_type)
-    data_url = bytes_to_data_url(image_bytes, mime_type)
+    converted_bytes, mime_type = normalize_image_for_openai(
+        image_bytes=image_bytes,
+        filename=filename,
+        content_type=content_type,
+    )
+
+    data_url = bytes_to_data_url(converted_bytes, mime_type)
     prompt = build_prompt()
 
     response = client.responses.create(
@@ -266,6 +321,7 @@ def health() -> dict[str, str]:
         "status": "ok",
         "model": OPENAI_MODEL,
         "openai_key": "set" if bool(OPENAI_API_KEY) else "missing",
+        "heic": "enabled",
     }
 
 
