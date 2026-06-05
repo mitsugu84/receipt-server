@@ -3,3 +3,5 @@ uvicorn
 openai
 pydantic
 python-multipart
+pillow
+pillow-heif
