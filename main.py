@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Receipt Server v1 - HEIC対応版
+Receipt Server v1.2 - HEIC対応 + メモリ対策版
 Render / FastAPI 用サーバー
 """
 
 import base64
+import gc
 import io
 import json
 import os
@@ -21,9 +22,13 @@ from pillow_heif import register_heif_opener
 
 register_heif_opener()
 
-APP_NAME = "Receipt Server v1 HEIC"
+APP_NAME = "Receipt Server v1.2 HEIC Memory Safe"
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini"
+
+MAX_IMAGE_LONG_SIDE = 1600
+JPEG_QUALITY = 85
 
 DEFAULT_CATEGORIES = [
     "材料費",
@@ -39,10 +44,11 @@ DEFAULT_CATEGORIES = [
     "その他",
 ]
 
+
 app = FastAPI(
     title=APP_NAME,
-    version="1.1.0",
-    description="Receipt image analysis server using OpenAI Vision. HEIC supported.",
+    version="1.2.0",
+    description="Receipt image analysis server using OpenAI Vision. HEIC supported. Memory optimized.",
 )
 
 app.add_middleware(
@@ -74,78 +80,62 @@ def get_openai_client() -> OpenAI:
     return OpenAI(api_key=OPENAI_API_KEY)
 
 
-def is_heic_file(filename: str, content_type: str | None) -> bool:
-    lower = (filename or "").lower()
-    ctype = (content_type or "").lower()
-    return (
-        lower.endswith(".heic")
-        or lower.endswith(".heif")
-        or "heic" in ctype
-        or "heif" in ctype
-    )
-
-
 def normalize_image_for_openai(
     image_bytes: bytes,
     filename: str,
     content_type: str | None,
 ) -> tuple[bytes, str]:
-    """
-    OpenAI Visionが受け付ける形式へ正規化する。
-    対応送信形式:
-    - image/jpeg
-    - image/png
-    - image/gif
-    - image/webp
-
-    HEIC/HEIFや怪しいJPEGはPillowで開いてJPEGへ変換する。
-    """
-    lower = (filename or "").lower()
-    ctype = (content_type or "").lower()
-
-    should_convert = False
-
-    if is_heic_file(filename, content_type):
-        should_convert = True
-    elif lower.endswith(".jpg") or lower.endswith(".jpeg"):
-        should_convert = False
-    elif lower.endswith(".png"):
-        should_convert = False
-    elif lower.endswith(".webp"):
-        should_convert = False
-    elif lower.endswith(".gif"):
-        should_convert = False
-    else:
-        should_convert = True
-
-    if not should_convert:
-        if lower.endswith(".png") or "png" in ctype:
-            return image_bytes, "image/png"
-        if lower.endswith(".webp") or "webp" in ctype:
-            return image_bytes, "image/webp"
-        if lower.endswith(".gif") or "gif" in ctype:
-            return image_bytes, "image/gif"
-        return image_bytes, "image/jpeg"
+    image = None
+    output = None
 
     try:
         image = Image.open(io.BytesIO(image_bytes))
         image.load()
 
         if image.mode in ("RGBA", "LA", "P"):
-            background = Image.new("RGB", image.size, (255, 255, 255))
-            if image.mode == "P":
-                image = image.convert("RGBA")
-            background.paste(image, mask=image.split()[-1] if image.mode in ("RGBA", "LA") else None)
-            image = background
-        else:
+            image = image.convert("RGB")
+        elif image.mode != "RGB":
             image = image.convert("RGB")
 
+        width, height = image.size
+        long_side = max(width, height)
+
+        if long_side > MAX_IMAGE_LONG_SIDE:
+            scale = MAX_IMAGE_LONG_SIDE / long_side
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            image = image.resize((new_width, new_height), Image.LANCZOS)
+
         output = io.BytesIO()
-        image.save(output, format="JPEG", quality=92, optimize=True)
-        return output.getvalue(), "image/jpeg"
+        image.save(
+            output,
+            format="JPEG",
+            quality=JPEG_QUALITY,
+            optimize=True,
+        )
+
+        converted = output.getvalue()
+        return converted, "image/jpeg"
 
     except Exception as exc:
         raise RuntimeError(f"画像変換に失敗しました: {exc}") from exc
+
+    finally:
+        try:
+            if image is not None:
+                image.close()
+        except Exception:
+            pass
+
+        try:
+            if output is not None:
+                output.close()
+        except Exception:
+            pass
+
+        del image
+        del output
+        gc.collect()
 
 
 def bytes_to_data_url(image_bytes: bytes, mime_type: str) -> str:
@@ -263,47 +253,54 @@ def analyze_receipt_image(
     filename: str,
     content_type: str | None,
 ) -> ReceiptResult:
-    client = get_openai_client()
+    converted_bytes = None
 
-    converted_bytes, mime_type = normalize_image_for_openai(
-        image_bytes=image_bytes,
-        filename=filename,
-        content_type=content_type,
-    )
+    try:
+        client = get_openai_client()
 
-    data_url = bytes_to_data_url(converted_bytes, mime_type)
-    prompt = build_prompt()
+        converted_bytes, mime_type = normalize_image_for_openai(
+            image_bytes=image_bytes,
+            filename=filename,
+            content_type=content_type,
+        )
 
-    response = client.responses.create(
-        model=OPENAI_MODEL,
-        input=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": prompt,
-                    },
-                    {
-                        "type": "input_image",
-                        "image_url": data_url,
-                    },
-                ],
-            }
-        ],
-    )
+        data_url = bytes_to_data_url(converted_bytes, mime_type)
+        prompt = build_prompt()
 
-    result_text = response.output_text
-    data = parse_json_from_text(result_text)
+        response = client.responses.create(
+            model=OPENAI_MODEL,
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": prompt,
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": data_url,
+                        },
+                    ],
+                }
+            ],
+        )
 
-    return ReceiptResult(
-        date=normalize_date(data.get("date", "")),
-        vendor=str(data.get("vendor", "") or ""),
-        store=str(data.get("store", "") or ""),
-        amount=safe_int(data.get("amount", 0)),
-        category=str(data.get("category", "") or ""),
-        memo=str(data.get("memo", "") or ""),
-    )
+        result_text = response.output_text
+        data = parse_json_from_text(result_text)
+
+        return ReceiptResult(
+            date=normalize_date(data.get("date", "")),
+            vendor=str(data.get("vendor", "") or ""),
+            store=str(data.get("store", "") or ""),
+            amount=safe_int(data.get("amount", 0)),
+            category=str(data.get("category", "") or ""),
+            memo=str(data.get("memo", "") or ""),
+        )
+
+    finally:
+        del converted_bytes
+        gc.collect()
 
 
 @app.get("/")
@@ -316,12 +313,15 @@ def root() -> dict[str, str]:
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
+def health() -> dict[str, str | int]:
     return {
         "status": "ok",
         "model": OPENAI_MODEL,
         "openai_key": "set" if bool(OPENAI_API_KEY) else "missing",
         "heic": "enabled",
+        "memory_safe": "enabled",
+        "max_long_side": MAX_IMAGE_LONG_SIDE,
+        "jpeg_quality": JPEG_QUALITY,
     }
 
 
@@ -340,11 +340,15 @@ async def analyze(file: UploadFile = File(...)) -> ReceiptResult:
         if not image_bytes:
             raise HTTPException(status_code=400, detail="file is empty")
 
-        return analyze_receipt_image(
-            image_bytes=image_bytes,
-            filename=file.filename,
-            content_type=file.content_type,
-        )
+        try:
+            return analyze_receipt_image(
+                image_bytes=image_bytes,
+                filename=file.filename,
+                content_type=file.content_type,
+            )
+        finally:
+            del image_bytes
+            gc.collect()
 
     except HTTPException:
         raise
