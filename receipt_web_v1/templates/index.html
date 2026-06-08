@@ -46,6 +46,23 @@
             background: #fff;
             border-radius: 10px;
             border: 1px solid #ddd;
+            box-sizing: border-box;
+        }
+        .file-list {
+            margin-top: 14px;
+            padding: 12px;
+            background: #f8fafc;
+            border-radius: 10px;
+            text-align: left;
+            font-size: 14px;
+            color: #334155;
+            display: none;
+            line-height: 1.7;
+        }
+        .button-row {
+            display: flex;
+            gap: 10px;
+            margin-top: 14px;
         }
         button {
             width: 100%;
@@ -61,6 +78,16 @@
         button:hover {
             background: #1d4ed8;
         }
+        button:disabled {
+            background: #94a3b8;
+            cursor: not-allowed;
+        }
+        .reset-button {
+            background: #64748b;
+        }
+        .reset-button:hover {
+            background: #475569;
+        }
         .notice {
             background: #fff7ed;
             color: #9a3412;
@@ -73,6 +100,11 @@
             font-size: 14px;
             margin-top: 12px;
             line-height: 1.6;
+        }
+        @media (max-width: 520px) {
+            .button-row {
+                flex-direction: column;
+            }
         }
     </style>
 </head>
@@ -92,15 +124,22 @@
           {% endif %}
         {% endwith %}
 
-        <form action="/analyze" method="post" enctype="multipart/form-data">
+        <form action="/analyze" method="post" enctype="multipart/form-data" id="uploadForm">
             <div class="upload-box">
-                <input type="file" name="receipts" accept="image/*" multiple required>
+                <input type="file" name="receipts" id="receiptInput" accept="image/*" multiple required>
+
+                <div id="fileList" class="file-list"></div>
+
                 <div class="small">
                     スマホならカメラ撮影・写真選択ができます。<br>
                     jpg / jpeg / png / webp 対応
                 </div>
             </div>
-            <button type="submit">解析してExcelを作成</button>
+
+            <div class="button-row">
+                <button type="submit" id="submitButton" disabled>解析してExcelを作成</button>
+                <button type="button" class="reset-button" id="resetButton">リセット</button>
+            </div>
         </form>
 
         <p class="small">
@@ -108,5 +147,50 @@
         </p>
     </div>
 </div>
+
+<script>
+    const receiptInput = document.getElementById("receiptInput");
+    const fileList = document.getElementById("fileList");
+    const resetButton = document.getElementById("resetButton");
+    const submitButton = document.getElementById("submitButton");
+    const uploadForm = document.getElementById("uploadForm");
+
+    function updateFileList() {
+        const files = Array.from(receiptInput.files);
+
+        if (files.length === 0) {
+            fileList.style.display = "none";
+            fileList.innerHTML = "";
+            submitButton.disabled = true;
+            return;
+        }
+
+        submitButton.disabled = false;
+        fileList.style.display = "block";
+
+        const names = files.map((file, index) => {
+            return `${index + 1}. ${file.name}`;
+        });
+
+        fileList.innerHTML = `
+            <strong>選択中の写真：${files.length}枚</strong><br>
+            ${names.join("<br>")}
+        `;
+    }
+
+    receiptInput.addEventListener("change", updateFileList);
+
+    resetButton.addEventListener("click", function () {
+        receiptInput.value = "";
+        updateFileList();
+    });
+
+    uploadForm.addEventListener("submit", function () {
+        submitButton.disabled = true;
+        submitButton.textContent = "解析中...";
+    });
+
+    updateFileList();
+</script>
 </body>
 </html>
