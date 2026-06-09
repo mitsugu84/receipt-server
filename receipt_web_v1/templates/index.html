@@ -12,26 +12,31 @@
             padding: 0;
             color: #222;
         }
+
         .container {
             max-width: 720px;
             margin: 0 auto;
             padding: 24px;
         }
+
         .card {
             background: #fff;
             border-radius: 18px;
             padding: 24px;
             box-shadow: 0 8px 24px rgba(0,0,0,0.08);
         }
+
         h1 {
             font-size: 26px;
             margin: 0 0 8px;
         }
+
         .lead {
             color: #666;
             margin-bottom: 24px;
             line-height: 1.7;
         }
+
         .upload-box {
             border: 2px dashed #b8c4d6;
             border-radius: 16px;
@@ -40,6 +45,21 @@
             background: #fafcff;
             margin-bottom: 20px;
         }
+
+        .upload-title {
+            font-size: 20px;
+            font-weight: 800;
+            margin-bottom: 14px;
+            color: #1e293b;
+        }
+
+        .upload-subtitle {
+            color: #64748b;
+            font-size: 14px;
+            margin-bottom: 14px;
+            line-height: 1.6;
+        }
+
         input[type=file] {
             width: 100%;
             padding: 12px;
@@ -48,6 +68,7 @@
             border: 1px solid #ddd;
             box-sizing: border-box;
         }
+
         .file-list {
             margin-top: 14px;
             padding: 12px;
@@ -59,11 +80,13 @@
             display: none;
             line-height: 1.7;
         }
+
         .button-row {
             display: flex;
             gap: 10px;
             margin-top: 14px;
         }
+
         button {
             width: 100%;
             border: none;
@@ -75,19 +98,24 @@
             border-radius: 12px;
             cursor: pointer;
         }
+
         button:hover {
             background: #1d4ed8;
         }
+
         button:disabled {
             background: #94a3b8;
             cursor: not-allowed;
         }
+
         .reset-button {
             background: #64748b;
         }
+
         .reset-button:hover {
             background: #475569;
         }
+
         .notice {
             background: #fff7ed;
             color: #9a3412;
@@ -95,15 +123,29 @@
             border-radius: 10px;
             margin-bottom: 16px;
         }
+
         .small {
             color: #777;
             font-size: 14px;
             margin-top: 12px;
             line-height: 1.6;
         }
+
         @media (max-width: 520px) {
             .button-row {
                 flex-direction: column;
+            }
+
+            .container {
+                padding: 16px;
+            }
+
+            .card {
+                padding: 20px;
+            }
+
+            .upload-box {
+                padding: 22px;
             }
         }
     </style>
@@ -112,6 +154,7 @@
 <div class="container">
     <div class="card">
         <h1>領収書まとめWeb</h1>
+
         <p class="lead">
             領収書・レシートの写真をアップロードすると、AIが読み取ってExcelにまとめます。
         </p>
@@ -126,12 +169,17 @@
 
         <form action="/analyze" method="post" enctype="multipart/form-data" id="uploadForm">
             <div class="upload-box">
+                <div class="upload-title">📷 レシートを撮る・選ぶ</div>
+
+                <div class="upload-subtitle">
+                    スマホならその場で撮影、または写真から選択できます。
+                </div>
+
                 <input type="file" name="receipts" id="receiptInput" accept="image/*" multiple required>
 
                 <div id="fileList" class="file-list"></div>
 
                 <div class="small">
-                    スマホならカメラ撮影・写真選択ができます。<br>
                     jpg / jpeg / png / webp 対応
                 </div>
             </div>
