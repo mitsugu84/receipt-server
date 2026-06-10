@@ -36,8 +36,10 @@ def allowed_file(filename: str) -> bool:
 def image_to_data_url(image_path: Path) -> str:
     ext = image_path.suffix.lower().replace(".", "")
     mime = "jpeg" if ext in ["jpg", "jpeg"] else ext
+
     with open(image_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode("utf-8")
+
     return f"data:image/{mime};base64,{b64}"
 
 
@@ -80,7 +82,13 @@ def analyze_receipt(image_path: Path) -> dict:
         response_format={"type": "json_object"},
     )
 
+    print("========== OPENAI USAGE ==========")
+    print(f"file: {image_path.name}")
+    print(response.usage)
+    print("==================================")
+
     content = response.choices[0].message.content
+
     try:
         data = json.loads(content)
     except Exception:
@@ -149,10 +157,12 @@ def create_excel(records: list[dict]) -> Path:
     total_ws.append(["件数", len(records)])
     total_ws.append(["合計金額", sum(r["amount"] for r in records)])
     total_ws.cell(row=3, column=2).number_format = '#,##0"円"'
+
     style_sheet(total_ws)
 
     output_path = OUTPUT_DIR / f"receipt_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}.xlsx"
     wb.save(output_path)
+
     return output_path
 
 
@@ -176,9 +186,11 @@ def style_sheet(ws):
     for col in ws.columns:
         max_length = 0
         col_letter = get_column_letter(col[0].column)
+
         for cell in col:
             value = "" if cell.value is None else str(cell.value)
             max_length = max(max_length, len(value))
+
         ws.column_dimensions[col_letter].width = min(max(max_length + 3, 12), 40)
 
 
@@ -239,4 +251,8 @@ def download(filename):
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000)),
+        debug=True
+    )
