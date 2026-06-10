@@ -26,6 +26,10 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 
+OPENAI_INPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_INPUT_PRICE_PER_1M", "0.15"))
+OPENAI_OUTPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_OUTPUT_PRICE_PER_1M", "0.60"))
+USD_JPY_RATE = float(os.environ.get("USD_JPY_RATE", "150"))
+
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 
@@ -55,6 +59,16 @@ def init_db():
 
 
 init_db()
+
+
+def estimate_cost_usd(prompt_tokens: int, completion_tokens: int) -> float:
+    input_cost = prompt_tokens / 1_000_000 * OPENAI_INPUT_PRICE_PER_1M
+    output_cost = completion_tokens / 1_000_000 * OPENAI_OUTPUT_PRICE_PER_1M
+    return input_cost + output_cost
+
+
+def estimate_cost_jpy(prompt_tokens: int, completion_tokens: int) -> float:
+    return estimate_cost_usd(prompt_tokens, completion_tokens) * USD_JPY_RATE
 
 
 def save_usage_log(filename: str, usage):
@@ -318,6 +332,7 @@ def download(filename):
 @app.route("/usage-logs", methods=["GET"])
 def usage_logs():
     conn = get_db_connection()
+
     logs = conn.execute("""
         SELECT
             id,
@@ -330,9 +345,26 @@ def usage_logs():
         ORDER BY id DESC
         LIMIT 50
     """).fetchall()
+
+    summary = conn.execute("""
+        SELECT
+            COUNT(*) AS count,
+            COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+            COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+            COALESCE(SUM(total_tokens), 0) AS total_tokens
+        FROM usage_logs
+    """).fetchone()
+
     conn.close()
 
-    html = """
+    total_count = summary["count"]
+    total_prompt_tokens = summary["prompt_tokens"]
+    total_completion_tokens = summary["completion_tokens"]
+    total_tokens = summary["total_tokens"]
+    total_cost_usd = estimate_cost_usd(total_prompt_tokens, total_completion_tokens)
+    total_cost_jpy = estimate_cost_jpy(total_prompt_tokens, total_completion_tokens)
+
+    html = f"""
     <!DOCTYPE html>
     <html lang="ja">
     <head>
@@ -340,59 +372,109 @@ def usage_logs():
         <title>Usage Logs</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body {
+            body {{
                 font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
                 background: #f5f8fd;
                 padding: 24px;
                 color: #0f172a;
-            }
-            .container {
-                max-width: 1100px;
+            }}
+            .container {{
+                max-width: 1200px;
                 margin: 0 auto;
                 background: #fff;
                 padding: 24px;
                 border-radius: 16px;
                 box-shadow: 0 8px 24px rgba(0,0,0,.08);
-            }
-            h1 {
+            }}
+            h1 {{
                 margin-top: 0;
-            }
-            table {
+            }}
+            .small {{
+                color: #64748b;
+                font-size: 14px;
+            }}
+            .summary-grid {{
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 14px;
+                margin: 22px 0;
+            }}
+            .summary-card {{
+                background: #f8fafc;
+                border: 1px solid #e5e7eb;
+                border-radius: 14px;
+                padding: 16px;
+            }}
+            .summary-label {{
+                color: #64748b;
+                font-size: 13px;
+                margin-bottom: 6px;
+            }}
+            .summary-value {{
+                font-size: 24px;
+                font-weight: 900;
+                color: #2563eb;
+            }}
+            table {{
                 width: 100%;
                 border-collapse: collapse;
                 margin-top: 20px;
-            }
-            th, td {
+            }}
+            th, td {{
                 border: 1px solid #e5e7eb;
                 padding: 10px;
                 font-size: 14px;
                 text-align: left;
-            }
-            th {
+            }}
+            th {{
                 background: #dfeaff;
-            }
-            .small {
-                color: #64748b;
-                font-size: 14px;
-            }
-            @media(max-width:700px){
-                body {
+            }}
+            @media(max-width:800px){{
+                body {{
                     padding: 12px;
-                }
-                .container {
+                }}
+                .container {{
                     padding: 16px;
                     overflow-x: auto;
-                }
-                table {
-                    min-width: 850px;
-                }
-            }
+                }}
+                .summary-grid {{
+                    grid-template-columns: 1fr;
+                }}
+                table {{
+                    min-width: 1000px;
+                }}
+            }}
         </style>
     </head>
     <body>
         <div class="container">
             <h1>Usage Logs</h1>
-            <p class="small">最新50件のOpenAI usageログです。</p>
+            <p class="small">
+                最新50件のOpenAI usageログです。<br>
+                推定単価：入力 ${OPENAI_INPUT_PRICE_PER_1M} / 100万tokens、
+                出力 ${OPENAI_OUTPUT_PRICE_PER_1M} / 100万tokens、
+                為替 {USD_JPY_RATE}円/USD で計算。
+            </p>
+
+            <div class="summary-grid">
+                <div class="summary-card">
+                    <div class="summary-label">総件数</div>
+                    <div class="summary-value">{total_count}</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-label">総トークン数</div>
+                    <div class="summary-value">{total_tokens:,}</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-label">推定コスト USD</div>
+                    <div class="summary-value">${total_cost_usd:.4f}</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-label">推定コスト 円</div>
+                    <div class="summary-value">約{total_cost_jpy:.1f}円</div>
+                </div>
+            </div>
+
             <table>
                 <tr>
                     <th>ID</th>
@@ -401,18 +483,25 @@ def usage_logs():
                     <th>Prompt Tokens</th>
                     <th>Completion Tokens</th>
                     <th>Total Tokens</th>
+                    <th>推定USD</th>
+                    <th>推定円</th>
                 </tr>
     """
 
     for log in logs:
+        cost_usd = estimate_cost_usd(log["prompt_tokens"], log["completion_tokens"])
+        cost_jpy = estimate_cost_jpy(log["prompt_tokens"], log["completion_tokens"])
+
         html += f"""
                 <tr>
                     <td>{log["id"]}</td>
                     <td>{log["created_at"]}</td>
                     <td>{log["filename"]}</td>
-                    <td>{log["prompt_tokens"]}</td>
-                    <td>{log["completion_tokens"]}</td>
-                    <td>{log["total_tokens"]}</td>
+                    <td>{log["prompt_tokens"]:,}</td>
+                    <td>{log["completion_tokens"]:,}</td>
+                    <td>{log["total_tokens"]:,}</td>
+                    <td>${cost_usd:.6f}</td>
+                    <td>約{cost_jpy:.2f}円</td>
                 </tr>
         """
 
