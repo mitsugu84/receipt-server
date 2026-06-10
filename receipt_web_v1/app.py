@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -18,12 +19,74 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-this-secret-key")
 
 UPLOAD_DIR = Path("uploads")
 OUTPUT_DIR = Path("outputs")
+DB_PATH = Path("database.db")
+
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS usage_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            prompt_tokens INTEGER NOT NULL,
+            completion_tokens INTEGER NOT NULL,
+            total_tokens INTEGER NOT NULL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+init_db()
+
+
+def save_usage_log(filename: str, usage):
+    prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+    completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+    total_tokens = getattr(usage, "total_tokens", 0) or 0
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO usage_logs (
+            created_at,
+            filename,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens
+        )
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            filename,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        )
+    )
+
+    conn.commit()
+    conn.close()
 
 
 def allowed_file(filename: str) -> bool:
@@ -86,6 +149,8 @@ def analyze_receipt(image_path: Path) -> dict:
     print(f"file: {image_path.name}")
     print(response.usage)
     print("==================================")
+
+    save_usage_log(image_path.name, response.usage)
 
     content = response.choices[0].message.content
 
@@ -248,6 +313,117 @@ def download(filename):
         return redirect(url_for("index"))
 
     return send_file(file_path, as_attachment=True)
+
+
+@app.route("/usage-logs", methods=["GET"])
+def usage_logs():
+    conn = get_db_connection()
+    logs = conn.execute("""
+        SELECT
+            id,
+            created_at,
+            filename,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens
+        FROM usage_logs
+        ORDER BY id DESC
+        LIMIT 50
+    """).fetchall()
+    conn.close()
+
+    html = """
+    <!DOCTYPE html>
+    <html lang="ja">
+    <head>
+        <meta charset="UTF-8">
+        <title>Usage Logs</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body {
+                font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                background: #f5f8fd;
+                padding: 24px;
+                color: #0f172a;
+            }
+            .container {
+                max-width: 1100px;
+                margin: 0 auto;
+                background: #fff;
+                padding: 24px;
+                border-radius: 16px;
+                box-shadow: 0 8px 24px rgba(0,0,0,.08);
+            }
+            h1 {
+                margin-top: 0;
+            }
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 20px;
+            }
+            th, td {
+                border: 1px solid #e5e7eb;
+                padding: 10px;
+                font-size: 14px;
+                text-align: left;
+            }
+            th {
+                background: #dfeaff;
+            }
+            .small {
+                color: #64748b;
+                font-size: 14px;
+            }
+            @media(max-width:700px){
+                body {
+                    padding: 12px;
+                }
+                .container {
+                    padding: 16px;
+                    overflow-x: auto;
+                }
+                table {
+                    min-width: 850px;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Usage Logs</h1>
+            <p class="small">最新50件のOpenAI usageログです。</p>
+            <table>
+                <tr>
+                    <th>ID</th>
+                    <th>日時</th>
+                    <th>ファイル名</th>
+                    <th>Prompt Tokens</th>
+                    <th>Completion Tokens</th>
+                    <th>Total Tokens</th>
+                </tr>
+    """
+
+    for log in logs:
+        html += f"""
+                <tr>
+                    <td>{log["id"]}</td>
+                    <td>{log["created_at"]}</td>
+                    <td>{log["filename"]}</td>
+                    <td>{log["prompt_tokens"]}</td>
+                    <td>{log["completion_tokens"]}</td>
+                    <td>{log["total_tokens"]}</td>
+                </tr>
+        """
+
+    html += """
+            </table>
+        </div>
+    </body>
+    </html>
+    """
+
+    return html
 
 
 if __name__ == "__main__":
