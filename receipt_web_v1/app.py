@@ -37,6 +37,9 @@ ALLOWED_EXTENSIONS = {
     "heif"
 }
 
+MAX_FILES_PER_UPLOAD = 5
+MAX_IMAGE_SIZE = 1200
+
 OPENAI_INPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_INPUT_PRICE_PER_1M", "0.15"))
 OPENAI_OUTPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_OUTPUT_PRICE_PER_1M", "0.60"))
 USD_JPY_RATE = float(os.environ.get("USD_JPY_RATE", "150"))
@@ -107,7 +110,7 @@ def allowed_file(filename: str) -> bool:
 
 def delete_file_safely(path: Path):
     try:
-        if path.exists():
+        if path and path.exists():
             path.unlink()
             print(f"Deleted temp file: {path.name}")
     except Exception as e:
@@ -124,21 +127,31 @@ def convert_heic_to_jpeg_if_needed(image_path: Path) -> Path:
 
     with Image.open(image_path) as image:
         image = image.convert("RGB")
-        image.save(converted_path, "JPEG", quality=90)
+        image.save(converted_path, "JPEG", quality=90, optimize=True)
 
     print(f"HEIC converted -> {converted_path.name}")
 
     return converted_path
 
 
-def image_to_data_url(image_path: Path) -> str:
-    ext = image_path.suffix.lower().replace(".", "")
-    mime = "jpeg" if ext in ["jpg", "jpeg"] else ext
+def resize_image_for_ai(image_path: Path, max_size: int = MAX_IMAGE_SIZE) -> Path:
+    resized_path = image_path.with_name(f"{image_path.stem}_resized.jpg")
 
+    with Image.open(image_path) as image:
+        image = image.convert("RGB")
+        image.thumbnail((max_size, max_size))
+        image.save(resized_path, "JPEG", quality=85, optimize=True)
+
+    print(f"Image resized -> {resized_path.name}")
+
+    return resized_path
+
+
+def image_to_data_url(image_path: Path) -> str:
     with open(image_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode("utf-8")
 
-    return f"data:image/{mime};base64,{b64}"
+    return f"data:image/jpeg;base64,{b64}"
 
 
 def analyze_receipt(image_path: Path) -> dict:
@@ -311,6 +324,10 @@ def analyze():
         flash("画像ファイルを選択してください。")
         return redirect(url_for("index"))
 
+    if len(files) > MAX_FILES_PER_UPLOAD:
+        flash(f"一度にアップロードできるのは{MAX_FILES_PER_UPLOAD}枚までです。")
+        return redirect(url_for("index"))
+
     records = []
 
     try:
@@ -323,13 +340,15 @@ def analyze():
             save_path = UPLOAD_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}_{safe_name}"
 
             converted_path = None
+            resized_path = None
 
             try:
                 f.save(save_path)
 
                 converted_path = convert_heic_to_jpeg_if_needed(save_path)
+                resized_path = resize_image_for_ai(converted_path)
 
-                record = analyze_receipt(converted_path)
+                record = analyze_receipt(resized_path)
                 records.append(record)
 
             finally:
@@ -337,6 +356,9 @@ def analyze():
 
                 if converted_path and converted_path != save_path:
                     delete_file_safely(converted_path)
+
+                if resized_path and resized_path != converted_path:
+                    delete_file_safely(resized_path)
 
         excel_path = create_excel(records)
 
