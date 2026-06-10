@@ -13,6 +13,11 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
+from PIL import Image
+from pillow_heif import register_heif_opener
+
+
+register_heif_opener()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-this-secret-key")
@@ -23,7 +28,14 @@ OUTPUT_DIR = Path("outputs")
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
+ALLOWED_EXTENSIONS = {
+    "jpg",
+    "jpeg",
+    "png",
+    "webp",
+    "heic",
+    "heif"
+}
 
 OPENAI_INPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_INPUT_PRICE_PER_1M", "0.15"))
 OPENAI_OUTPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_OUTPUT_PRICE_PER_1M", "0.60"))
@@ -88,8 +100,26 @@ def save_usage_log(filename: str, usage):
 def allowed_file(filename: str) -> bool:
     if "." not in filename:
         return False
+
     ext = filename.rsplit(".", 1)[1].lower()
     return ext in ALLOWED_EXTENSIONS
+
+
+def convert_heic_to_jpeg_if_needed(image_path: Path) -> Path:
+    ext = image_path.suffix.lower()
+
+    if ext not in [".heic", ".heif"]:
+        return image_path
+
+    converted_path = image_path.with_suffix(".jpg")
+
+    image = Image.open(image_path)
+    image = image.convert("RGB")
+    image.save(converted_path, "JPEG", quality=90)
+
+    print(f"HEIC converted -> {converted_path.name}")
+
+    return converted_path
 
 
 def image_to_data_url(image_path: Path) -> str:
@@ -276,13 +306,16 @@ def analyze():
 
     for f in files:
         if not allowed_file(f.filename):
-            flash("対応形式は jpg / jpeg / png / webp です。")
+            flash("対応形式は jpg / jpeg / png / webp / heic / heif です。")
             return redirect(url_for("index"))
 
         safe_name = secure_filename(f.filename)
         save_path = UPLOAD_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}_{safe_name}"
+
         f.save(save_path)
-        saved_paths.append(save_path)
+
+        converted_path = convert_heic_to_jpeg_if_needed(save_path)
+        saved_paths.append(converted_path)
 
     records = []
 
