@@ -9,6 +9,7 @@ from uuid import uuid4
 from flask import Flask, render_template, request, send_file, redirect, url_for, flash
 from werkzeug.utils import secure_filename
 from openai import OpenAI
+from supabase import create_client
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
@@ -31,6 +32,21 @@ OPENAI_OUTPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_OUTPUT_PRICE_PER_1M", 
 USD_JPY_RATE = float(os.environ.get("USD_JPY_RATE", "150"))
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY")
+
+supabase = None
+
+if SUPABASE_URL and SUPABASE_SECRET_KEY:
+    try:
+        supabase = create_client(
+            SUPABASE_URL,
+            SUPABASE_SECRET_KEY
+        )
+        print("Supabase connected")
+    except Exception as e:
+        print("Supabase connection error:", e)
 
 
 def get_db_connection():
@@ -75,32 +91,66 @@ def save_usage_log(filename: str, usage):
     prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
     completion_tokens = getattr(usage, "completion_tokens", 0) or 0
     total_tokens = getattr(usage, "total_tokens", 0) or 0
-
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        INSERT INTO usage_logs (
-            created_at,
-            filename,
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    estimated_cost_yen = round(
+        estimate_cost_jpy(
             prompt_tokens,
-            completion_tokens,
-            total_tokens
-        )
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            filename,
-            prompt_tokens,
-            completion_tokens,
-            total_tokens,
-        )
+            completion_tokens
+        ),
+        2
     )
 
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            INSERT INTO usage_logs (
+                created_at,
+                filename,
+                prompt_tokens,
+                completion_tokens,
+                total_tokens
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                created_at,
+                filename,
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+            )
+        )
+
+        conn.commit()
+        conn.close()
+
+        print("Saved to SQLite")
+
+    except Exception as e:
+        print("SQLite save error:", e)
+
+    try:
+        if supabase:
+            supabase.table("usage_logs").insert({
+                "created_at": created_at,
+                "filename": filename,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "estimated_cost_yen": estimated_cost_yen,
+                "ip_address": request.headers.get(
+                    "X-Forwarded-For",
+                    request.remote_addr
+                )
+            }).execute()
+
+            print("Saved to Supabase")
+
+    except Exception as e:
+        print("Supabase save error:", e)
 
 
 def allowed_file(filename: str) -> bool:
