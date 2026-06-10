@@ -1,7 +1,6 @@
 import os
 import json
 import base64
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -20,7 +19,6 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-this-secret-key")
 
 UPLOAD_DIR = Path("uploads")
 OUTPUT_DIR = Path("outputs")
-DB_PATH = Path("database.db")
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -37,44 +35,12 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY")
 
 supabase = None
-
 if SUPABASE_URL and SUPABASE_SECRET_KEY:
     try:
-        supabase = create_client(
-            SUPABASE_URL,
-            SUPABASE_SECRET_KEY
-        )
+        supabase = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
         print("Supabase connected")
     except Exception as e:
         print("Supabase connection error:", e)
-
-
-def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db():
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS usage_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TEXT NOT NULL,
-            filename TEXT NOT NULL,
-            prompt_tokens INTEGER NOT NULL,
-            completion_tokens INTEGER NOT NULL,
-            total_tokens INTEGER NOT NULL
-        )
-    """)
-
-    conn.commit()
-    conn.close()
-
-
-init_db()
 
 
 def estimate_cost_usd(prompt_tokens: int, completion_tokens: int) -> float:
@@ -91,63 +57,29 @@ def save_usage_log(filename: str, usage):
     prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
     completion_tokens = getattr(usage, "completion_tokens", 0) or 0
     total_tokens = getattr(usage, "total_tokens", 0) or 0
-    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     estimated_cost_yen = round(
-        estimate_cost_jpy(
-            prompt_tokens,
-            completion_tokens
-        ),
+        estimate_cost_jpy(prompt_tokens, completion_tokens),
         2
     )
 
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
+    ip_address = request.headers.get("X-Forwarded-For", request.remote_addr)
 
-        cur.execute(
-            """
-            INSERT INTO usage_logs (
-                created_at,
-                filename,
-                prompt_tokens,
-                completion_tokens,
-                total_tokens
-            )
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                created_at,
-                filename,
-                prompt_tokens,
-                completion_tokens,
-                total_tokens,
-            )
-        )
-
-        conn.commit()
-        conn.close()
-
-        print("Saved to SQLite")
-
-    except Exception as e:
-        print("SQLite save error:", e)
+    if not supabase:
+        print("Supabase is not configured")
+        return
 
     try:
-        if supabase:
-            supabase.table("usage_logs").insert({
-                "created_at": created_at,
-                "filename": filename,
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-                "estimated_cost_yen": estimated_cost_yen,
-                "ip_address": request.headers.get(
-                    "X-Forwarded-For",
-                    request.remote_addr
-                )
-            }).execute()
+        supabase.table("usage_logs").insert({
+            "filename": filename,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "estimated_cost_yen": estimated_cost_yen,
+            "ip_address": ip_address
+        }).execute()
 
-            print("Saved to Supabase")
+        print("Saved to Supabase")
 
     except Exception as e:
         print("Supabase save error:", e)
@@ -381,36 +313,42 @@ def download(filename):
 
 @app.route("/usage-logs", methods=["GET"])
 def usage_logs():
-    conn = get_db_connection()
+    logs = []
+    total_count = 0
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_tokens = 0
 
-    logs = conn.execute("""
-        SELECT
-            id,
-            created_at,
-            filename,
-            prompt_tokens,
-            completion_tokens,
-            total_tokens
-        FROM usage_logs
-        ORDER BY id DESC
-        LIMIT 50
-    """).fetchall()
+    if supabase:
+        try:
+            logs_response = (
+                supabase
+                .table("usage_logs")
+                .select("*")
+                .order("id", desc=True)
+                .limit(50)
+                .execute()
+            )
 
-    summary = conn.execute("""
-        SELECT
-            COUNT(*) AS count,
-            COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
-            COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
-            COALESCE(SUM(total_tokens), 0) AS total_tokens
-        FROM usage_logs
-    """).fetchone()
+            logs = logs_response.data or []
 
-    conn.close()
+            summary_response = (
+                supabase
+                .table("usage_logs")
+                .select("prompt_tokens, completion_tokens, total_tokens")
+                .execute()
+            )
 
-    total_count = summary["count"]
-    total_prompt_tokens = summary["prompt_tokens"]
-    total_completion_tokens = summary["completion_tokens"]
-    total_tokens = summary["total_tokens"]
+            all_logs = summary_response.data or []
+
+            total_count = len(all_logs)
+            total_prompt_tokens = sum(int(row.get("prompt_tokens") or 0) for row in all_logs)
+            total_completion_tokens = sum(int(row.get("completion_tokens") or 0) for row in all_logs)
+            total_tokens = sum(int(row.get("total_tokens") or 0) for row in all_logs)
+
+        except Exception as e:
+            print("Supabase read error:", e)
+
     total_cost_usd = estimate_cost_usd(total_prompt_tokens, total_completion_tokens)
     total_cost_jpy = estimate_cost_jpy(total_prompt_tokens, total_completion_tokens)
 
@@ -491,7 +429,7 @@ def usage_logs():
                     grid-template-columns: 1fr;
                 }}
                 table {{
-                    min-width: 1000px;
+                    min-width: 1100px;
                 }}
             }}
         </style>
@@ -500,7 +438,7 @@ def usage_logs():
         <div class="container">
             <h1>Usage Logs</h1>
             <p class="small">
-                最新50件のOpenAI usageログです。<br>
+                Supabaseに保存された最新50件のOpenAI usageログです。<br>
                 推定単価：入力 ${OPENAI_INPUT_PRICE_PER_1M} / 100万tokens、
                 出力 ${OPENAI_OUTPUT_PRICE_PER_1M} / 100万tokens、
                 為替 {USD_JPY_RATE}円/USD で計算。
@@ -535,23 +473,28 @@ def usage_logs():
                     <th>Total Tokens</th>
                     <th>推定USD</th>
                     <th>推定円</th>
+                    <th>IP</th>
                 </tr>
     """
 
     for log in logs:
-        cost_usd = estimate_cost_usd(log["prompt_tokens"], log["completion_tokens"])
-        cost_jpy = estimate_cost_jpy(log["prompt_tokens"], log["completion_tokens"])
+        prompt_tokens = int(log.get("prompt_tokens") or 0)
+        completion_tokens = int(log.get("completion_tokens") or 0)
+        total_tokens_row = int(log.get("total_tokens") or 0)
+        cost_usd = estimate_cost_usd(prompt_tokens, completion_tokens)
+        cost_jpy = estimate_cost_jpy(prompt_tokens, completion_tokens)
 
         html += f"""
                 <tr>
-                    <td>{log["id"]}</td>
-                    <td>{log["created_at"]}</td>
-                    <td>{log["filename"]}</td>
-                    <td>{log["prompt_tokens"]:,}</td>
-                    <td>{log["completion_tokens"]:,}</td>
-                    <td>{log["total_tokens"]:,}</td>
+                    <td>{log.get("id", "")}</td>
+                    <td>{log.get("created_at", "")}</td>
+                    <td>{log.get("filename", "")}</td>
+                    <td>{prompt_tokens:,}</td>
+                    <td>{completion_tokens:,}</td>
+                    <td>{total_tokens_row:,}</td>
                     <td>${cost_usd:.6f}</td>
                     <td>約{cost_jpy:.2f}円</td>
+                    <td>{log.get("ip_address", "")}</td>
                 </tr>
         """
 
