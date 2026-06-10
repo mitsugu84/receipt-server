@@ -105,6 +105,15 @@ def allowed_file(filename: str) -> bool:
     return ext in ALLOWED_EXTENSIONS
 
 
+def delete_file_safely(path: Path):
+    try:
+        if path.exists():
+            path.unlink()
+            print(f"Deleted temp file: {path.name}")
+    except Exception as e:
+        print(f"Delete file error: {path.name}", e)
+
+
 def convert_heic_to_jpeg_if_needed(image_path: Path) -> Path:
     ext = image_path.suffix.lower()
 
@@ -113,9 +122,9 @@ def convert_heic_to_jpeg_if_needed(image_path: Path) -> Path:
 
     converted_path = image_path.with_suffix(".jpg")
 
-    image = Image.open(image_path)
-    image = image.convert("RGB")
-    image.save(converted_path, "JPEG", quality=90)
+    with Image.open(image_path) as image:
+        image = image.convert("RGB")
+        image.save(converted_path, "JPEG", quality=90)
 
     print(f"HEIC converted -> {converted_path.name}")
 
@@ -302,26 +311,32 @@ def analyze():
         flash("画像ファイルを選択してください。")
         return redirect(url_for("index"))
 
-    saved_paths = []
-
-    for f in files:
-        if not allowed_file(f.filename):
-            flash("対応形式は jpg / jpeg / png / webp / heic / heif です。")
-            return redirect(url_for("index"))
-
-        safe_name = secure_filename(f.filename)
-        save_path = UPLOAD_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}_{safe_name}"
-
-        f.save(save_path)
-
-        converted_path = convert_heic_to_jpeg_if_needed(save_path)
-        saved_paths.append(converted_path)
-
     records = []
 
     try:
-        for path in saved_paths:
-            records.append(analyze_receipt(path))
+        for f in files:
+            if not allowed_file(f.filename):
+                flash("対応形式は jpg / jpeg / png / webp / heic / heif です。")
+                return redirect(url_for("index"))
+
+            safe_name = secure_filename(f.filename)
+            save_path = UPLOAD_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}_{safe_name}"
+
+            converted_path = None
+
+            try:
+                f.save(save_path)
+
+                converted_path = convert_heic_to_jpeg_if_needed(save_path)
+
+                record = analyze_receipt(converted_path)
+                records.append(record)
+
+            finally:
+                delete_file_safely(save_path)
+
+                if converted_path and converted_path != save_path:
+                    delete_file_safely(converted_path)
 
         excel_path = create_excel(records)
 
