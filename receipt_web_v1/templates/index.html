@@ -1,244 +1,337 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <title>領収書まとめWeb</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body {
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: #f5f7fb;
-            margin: 0;
-            padding: 0;
-            color: #222;
-        }
+  <meta charset="UTF-8">
+  <title>領収書まとめる君Web</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
 
-        .container {
-            max-width: 720px;
-            margin: 0 auto;
-            padding: 24px;
-        }
-
-        .card {
-            background: #fff;
-            border-radius: 18px;
-            padding: 24px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.08);
-        }
-
-        h1 {
-            font-size: 26px;
-            margin: 0 0 8px;
-        }
-
-        .lead {
-            color: #666;
-            margin-bottom: 24px;
-            line-height: 1.7;
-        }
-
-        .upload-box {
-            border: 2px dashed #b8c4d6;
-            border-radius: 16px;
-            padding: 28px;
-            text-align: center;
-            background: #fafcff;
-            margin-bottom: 20px;
-        }
-
-        .upload-title {
-            font-size: 20px;
-            font-weight: 800;
-            margin-bottom: 14px;
-            color: #1e293b;
-        }
-
-        .upload-subtitle {
-            color: #64748b;
-            font-size: 14px;
-            margin-bottom: 14px;
-            line-height: 1.6;
-        }
-
-        input[type=file] {
-            width: 100%;
-            padding: 12px;
-            background: #fff;
-            border-radius: 10px;
-            border: 1px solid #ddd;
-            box-sizing: border-box;
-        }
-
-        .file-list {
-            margin-top: 14px;
-            padding: 12px;
-            background: #f8fafc;
-            border-radius: 10px;
-            text-align: left;
-            font-size: 14px;
-            color: #334155;
-            display: none;
-            line-height: 1.7;
-        }
-
-        .button-row {
-            display: flex;
-            gap: 10px;
-            margin-top: 14px;
-        }
-
-        button {
-            width: 100%;
-            border: none;
-            background: #2563eb;
-            color: white;
-            font-size: 17px;
-            font-weight: 700;
-            padding: 15px;
-            border-radius: 12px;
-            cursor: pointer;
-        }
-
-        button:hover {
-            background: #1d4ed8;
-        }
-
-        button:disabled {
-            background: #94a3b8;
-            cursor: not-allowed;
-        }
-
-        .reset-button {
-            background: #64748b;
-        }
-
-        .reset-button:hover {
-            background: #475569;
-        }
-
-        .notice {
-            background: #fff7ed;
-            color: #9a3412;
-            padding: 12px 14px;
-            border-radius: 10px;
-            margin-bottom: 16px;
-        }
-
-        .small {
-            color: #777;
-            font-size: 14px;
-            margin-top: 12px;
-            line-height: 1.6;
-        }
-
-        @media (max-width: 520px) {
-            .button-row {
-                flex-direction: column;
-            }
-
-            .container {
-                padding: 16px;
-            }
-
-            .card {
-                padding: 20px;
-            }
-
-            .upload-box {
-                padding: 22px;
-            }
-        }
-    </style>
-</head>
-<body>
-<div class="container">
-    <div class="card">
-        <h1>領収書まとめる君Web</h1>
-
-        <p class="lead">
-            領収書・レシートの写真をアップロードすると、AIが読み取ってExcelにまとめます。
-        </p>
-
-        {% with messages = get_flashed_messages() %}
-          {% if messages %}
-            {% for message in messages %}
-              <div class="notice">{{ message }}</div>
-            {% endfor %}
-          {% endif %}
-        {% endwith %}
-
-        <form action="/analyze" method="post" enctype="multipart/form-data" id="uploadForm">
-            <div class="upload-box">
-                <div class="upload-title">📷 レシートを撮る・選ぶ</div>
-
-                <div class="upload-subtitle">
-                    スマホならその場で撮影、または写真から選択できます。
-                </div>
-
-                <input type="file" name="receipts" id="receiptInput" accept="image/*" multiple required>
-
-                <div id="fileList" class="file-list"></div>
-
-                <div class="small">
-                    jpg / jpeg / png / webp 対応
-                </div>
-            </div>
-
-            <div class="button-row">
-                <button type="submit" id="submitButton" disabled>解析してExcelを作成</button>
-                <button type="button" class="reset-button" id="resetButton">リセット</button>
-            </div>
-        </form>
-
-        <p class="small">
-            ※ v1ではログインなし・即時Excelダウンロード方式です。月末自動送信は次段階で追加します。
-        </p>
-    </div>
-</div>
-
-<script>
-    const receiptInput = document.getElementById("receiptInput");
-    const fileList = document.getElementById("fileList");
-    const resetButton = document.getElementById("resetButton");
-    const submitButton = document.getElementById("submitButton");
-    const uploadForm = document.getElementById("uploadForm");
-
-    function updateFileList() {
-        const files = Array.from(receiptInput.files);
-
-        if (files.length === 0) {
-            fileList.style.display = "none";
-            fileList.innerHTML = "";
-            submitButton.disabled = true;
-            return;
-        }
-
-        submitButton.disabled = false;
-        fileList.style.display = "block";
-
-        const names = files.map((file, index) => {
-            return `${index + 1}. ${file.name}`;
-        });
-
-        fileList.innerHTML = `
-            <strong>選択中の写真：${files.length}枚</strong><br>
-            ${names.join("<br>")}
-        `;
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f3f6fb;
+      color: #0f172a;
     }
 
-    receiptInput.addEventListener("change", updateFileList);
+    .container {
+      max-width: 720px;
+      margin: 48px auto;
+      background: #fff;
+      padding: 24px;
+      border-radius: 18px;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+    }
 
-    resetButton.addEventListener("click", function () {
-        receiptInput.value = "";
-        updateFileList();
+    h1 {
+      margin-top: 0;
+      font-size: 28px;
+    }
+
+    .lead {
+      color: #475569;
+      line-height: 1.7;
+      margin-bottom: 26px;
+    }
+
+    .flash {
+      background: #fff7ed;
+      color: #9a3412;
+      padding: 14px;
+      border-radius: 10px;
+      margin-bottom: 16px;
+    }
+
+    .upload-box {
+      border: 2px dashed #b6c8e8;
+      border-radius: 16px;
+      padding: 28px;
+      text-align: center;
+      background: #f8fbff;
+    }
+
+    .upload-title {
+      font-size: 20px;
+      font-weight: 800;
+      margin-bottom: 12px;
+    }
+
+    .upload-desc {
+      color: #64748b;
+      font-size: 14px;
+      margin-bottom: 18px;
+      line-height: 1.7;
+    }
+
+    .limit-note {
+      margin-top: 12px;
+      color: #64748b;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .file-input-wrap {
+      background: #fff;
+      border: 1px solid #d7dce5;
+      border-radius: 10px;
+      padding: 12px;
+      text-align: left;
+    }
+
+    input[type="file"] {
+      width: 100%;
+      font-size: 15px;
+    }
+
+    .selected-list {
+      margin-top: 18px;
+      background: #f8fafc;
+      border-radius: 12px;
+      padding: 16px;
+      text-align: left;
+      font-size: 14px;
+      color: #0f172a;
+      min-height: 46px;
+    }
+
+    .selected-list strong {
+      display: block;
+      margin-bottom: 8px;
+    }
+
+    .selected-list ol {
+      margin: 0;
+      padding-left: 22px;
+    }
+
+    .selected-list li {
+      margin: 5px 0;
+      word-break: break-all;
+    }
+
+    .empty {
+      color: #64748b;
+    }
+
+    .buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 22px;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 10px;
+      padding: 16px;
+      font-size: 17px;
+      font-weight: 800;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+      box-sizing: border-box;
+    }
+
+    .btn.primary {
+      background: #2563eb;
+      color: #fff;
+    }
+
+    .btn.secondary {
+      background: #64748b;
+      color: #fff;
+    }
+
+    .btn:disabled {
+      background: #cbd5e1;
+      cursor: not-allowed;
+    }
+
+    .footnote {
+      margin-top: 16px;
+      color: #64748b;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    @media (max-width: 700px) {
+      .container {
+        margin: 20px 12px;
+        padding: 20px;
+      }
+
+      h1 {
+        font-size: 24px;
+      }
+
+      .upload-box {
+        padding: 22px 16px;
+      }
+
+      .buttons {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>領収書まとめる君Web</h1>
+
+    <p class="lead">
+      領収書・レシートの写真をアップロードすると、AIが読み取ってExcelにまとめます。
+    </p>
+
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        {% for message in messages %}
+          <div class="flash">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <form id="uploadForm" action="{{ url_for('analyze') }}" method="post" enctype="multipart/form-data">
+      <div class="upload-box">
+        <div class="upload-title">📷 レシートを撮る・選ぶ</div>
+
+        <div class="upload-desc">
+          スマホならその場で撮影、または写真から選択できます。<br>
+          追加で撮影しても、前に選んだ写真は残ります。
+        </div>
+
+        <div class="file-input-wrap">
+          <input
+            id="fileInput"
+            type="file"
+            name="receipts"
+            accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
+            multiple
+          >
+        </div>
+
+        <div class="limit-note">
+          📌 一度に最大10枚までアップロードできます<br>
+          📱 スマホは「撮る → 追加 → 撮る → 追加」ができます
+        </div>
+
+        <div id="selectedList" class="selected-list">
+          <span class="empty">選択中の写真はありません。</span>
+        </div>
+      </div>
+
+      <div class="buttons">
+        <button id="submitBtn" class="btn primary" type="submit" disabled>
+          解析してExcelを作成
+        </button>
+
+        <button id="clearBtn" class="btn secondary" type="button">
+          選択をリセット
+        </button>
+      </div>
+    </form>
+
+    <p class="footnote">
+      ※ v1ではログインなし・即時Excelダウンロード方式です。月末自動送信は次段階で追加します。
+    </p>
+  </div>
+
+  <script>
+    const MAX_FILES = 10;
+
+    const fileInput = document.getElementById("fileInput");
+    const selectedList = document.getElementById("selectedList");
+    const uploadForm = document.getElementById("uploadForm");
+    const submitBtn = document.getElementById("submitBtn");
+    const clearBtn = document.getElementById("clearBtn");
+
+    let selectedFiles = [];
+
+    function renderSelectedFiles() {
+      if (selectedFiles.length === 0) {
+        selectedList.innerHTML = '<span class="empty">選択中の写真はありません。</span>';
+        submitBtn.disabled = true;
+        return;
+      }
+
+      let html = `<strong>選択中の写真：${selectedFiles.length}枚</strong>`;
+      html += "<ol>";
+
+      selectedFiles.forEach((file) => {
+        html += `<li>${escapeHtml(file.name)}</li>`;
+      });
+
+      html += "</ol>";
+
+      selectedList.innerHTML = html;
+      submitBtn.disabled = false;
+    }
+
+    function escapeHtml(text) {
+      return text
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function rebuildFileInput() {
+      const dataTransfer = new DataTransfer();
+
+      selectedFiles.forEach((file) => {
+        dataTransfer.items.add(file);
+      });
+
+      fileInput.files = dataTransfer.files;
+    }
+
+    fileInput.addEventListener("change", () => {
+      const newFiles = Array.from(fileInput.files);
+
+      if (newFiles.length === 0) {
+        rebuildFileInput();
+        return;
+      }
+
+      for (const file of newFiles) {
+        if (selectedFiles.length >= MAX_FILES) {
+          alert(`一度にアップロードできるのは最大${MAX_FILES}枚までです。`);
+          break;
+        }
+
+        selectedFiles.push(file);
+      }
+
+      rebuildFileInput();
+      renderSelectedFiles();
     });
 
-    uploadForm.addEventListener("submit", function () {
-        submitButton.disabled = true;
-        submitButton.textContent = "解析中...";
+    clearBtn.addEventListener("click", () => {
+      selectedFiles = [];
+      fileInput.value = "";
+      renderSelectedFiles();
     });
 
-    updateFileList();
-</script>
+    uploadForm.addEventListener("submit", (event) => {
+      if (selectedFiles.length === 0) {
+        event.preventDefault();
+        alert("写真を選択してください。");
+        return;
+      }
+
+      if (selectedFiles.length > MAX_FILES) {
+        event.preventDefault();
+        alert(`一度にアップロードできるのは最大${MAX_FILES}枚までです。`);
+        return;
+      }
+
+      rebuildFileInput();
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "解析中です...";
+    });
+
+    renderSelectedFiles();
+  </script>
 </body>
 </html>
