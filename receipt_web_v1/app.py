@@ -236,7 +236,7 @@ def analyze_receipt(image_path: Path) -> dict:
 """
 
     response = client.chat.completions.create(
-        model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
         messages=[
             {
                 "role": "user",
