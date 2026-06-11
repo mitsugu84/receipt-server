@@ -177,7 +177,6 @@ def analyze_receipt(image_path: Path) -> dict:
     data_url = image_to_data_url(image_path)
 
     prompt = """
-prompt = """
 あなたは日本の領収書・レシートを読み取る経費整理アシスタントです。
 
 画像から以下を抽出してください。
