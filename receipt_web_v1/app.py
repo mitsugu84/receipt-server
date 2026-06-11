@@ -34,11 +34,17 @@ ALLOWED_EXTENSIONS = {
     "png",
     "webp",
     "heic",
-    "heif"
+    "heif",
 }
 
-MAX_FILES_PER_UPLOAD = 5
+# Render安定化のため4枚上限
+MAX_FILES_PER_UPLOAD = 4
+
+# コスト削減・メモリ削減のため800pxへ縮小
 MAX_IMAGE_SIZE = 800
+
+# JPEG圧縮率
+JPEG_QUALITY = 70
 
 OPENAI_INPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_INPUT_PRICE_PER_1M", "0.15"))
 OPENAI_OUTPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_OUTPUT_PRICE_PER_1M", "0.60"))
@@ -91,7 +97,7 @@ def save_usage_log(filename: str, usage):
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
             "estimated_cost_yen": estimated_cost_yen,
-            "ip_address": ip_address
+            "ip_address": ip_address,
         }).execute()
 
         print("Saved to Supabase")
@@ -127,7 +133,12 @@ def convert_heic_to_jpeg_if_needed(image_path: Path) -> Path:
 
     with Image.open(image_path) as image:
         image = image.convert("RGB")
-        image.save(converted_path, "JPEG", quality=90, optimize=True)
+        image.save(
+            converted_path,
+            "JPEG",
+            quality=JPEG_QUALITY,
+            optimize=True
+        )
 
     print(f"HEIC converted -> {converted_path.name}")
 
@@ -140,9 +151,17 @@ def resize_image_for_ai(image_path: Path, max_size: int = MAX_IMAGE_SIZE) -> Pat
     with Image.open(image_path) as image:
         image = image.convert("RGB")
         image.thumbnail((max_size, max_size))
-        image.save(resized_path, "JPEG", quality=85, optimize=True)
+        image.save(
+            resized_path,
+            "JPEG",
+            quality=JPEG_QUALITY,
+            optimize=True
+        )
 
-    print(f"Image resized -> {resized_path.name}")
+    print(
+        f"Image resized -> {resized_path.name} "
+        f"({max_size}px / quality={JPEG_QUALITY})"
+    )
 
     return resized_path
 
@@ -223,6 +242,34 @@ def analyze_receipt(image_path: Path) -> dict:
     }
 
 
+def style_sheet(ws):
+    header_fill = PatternFill("solid", fgColor="D9EAF7")
+    header_font = Font(bold=True)
+    thin = Side(style="thin", color="CCCCCC")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+        cell.border = border
+
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            cell.border = border
+            cell.alignment = Alignment(vertical="center")
+
+    for col in ws.columns:
+        max_length = 0
+        col_letter = get_column_letter(col[0].column)
+
+        for cell in col:
+            value = "" if cell.value is None else str(cell.value)
+            max_length = max(max_length, len(value))
+
+        ws.column_dimensions[col_letter].width = min(max(max_length + 3, 12), 40)
+
+
 def create_excel(records: list[dict]) -> Path:
     wb = Workbook()
 
@@ -273,38 +320,14 @@ def create_excel(records: list[dict]) -> Path:
 
     style_sheet(total_ws)
 
-    output_path = OUTPUT_DIR / f"receipt_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}.xlsx"
+    output_path = OUTPUT_DIR / (
+        f"receipt_summary_"
+        f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
+        f"{uuid4().hex[:8]}.xlsx"
+    )
     wb.save(output_path)
 
     return output_path
-
-
-def style_sheet(ws):
-    header_fill = PatternFill("solid", fgColor="D9EAF7")
-    header_font = Font(bold=True)
-    thin = Side(style="thin", color="CCCCCC")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-
-    for cell in ws[1]:
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = Alignment(horizontal="center")
-        cell.border = border
-
-    for row in ws.iter_rows(min_row=2):
-        for cell in row:
-            cell.border = border
-            cell.alignment = Alignment(vertical="center")
-
-    for col in ws.columns:
-        max_length = 0
-        col_letter = get_column_letter(col[0].column)
-
-        for cell in col:
-            value = "" if cell.value is None else str(cell.value)
-            max_length = max(max_length, len(value))
-
-        ws.column_dimensions[col_letter].width = min(max(max_length + 3, 12), 40)
 
 
 @app.route("/", methods=["GET"])
@@ -337,7 +360,11 @@ def analyze():
                 return redirect(url_for("index"))
 
             safe_name = secure_filename(f.filename)
-            save_path = UPLOAD_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}_{safe_name}"
+            save_path = UPLOAD_DIR / (
+                f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
+                f"{uuid4().hex[:8]}_"
+                f"{safe_name}"
+            )
 
             converted_path = None
             resized_path = None
@@ -366,7 +393,11 @@ def analyze():
         flash(f"解析中にエラーが発生しました: {e}")
         return redirect(url_for("index"))
 
-    return render_template("result.html", records=records, excel_filename=excel_path.name)
+    return render_template(
+        "result.html",
+        records=records,
+        excel_filename=excel_path.name
+    )
 
 
 @app.route("/download/<filename>", methods=["GET"])
