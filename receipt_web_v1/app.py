@@ -37,13 +37,8 @@ ALLOWED_EXTENSIONS = {
     "heif",
 }
 
-# Render安定化のため4枚上限
 MAX_FILES_PER_UPLOAD = 4
-
-# コスト削減・メモリ削減のため800pxへ縮小
 MAX_IMAGE_SIZE = 1800
-
-# JPEG圧縮率
 JPEG_QUALITY = 95
 
 OPENAI_INPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_INPUT_PRICE_PER_1M", "0.15"))
@@ -165,13 +160,6 @@ def resize_image_for_ai(image_path: Path, max_size: int = MAX_IMAGE_SIZE) -> Pat
 
     return resized_path
 
-    print(
-        f"Image resized -> {resized_path.name} "
-        f"({max_size}px / quality={JPEG_QUALITY})"
-    )
-
-    return resized_path
-
 
 def image_to_data_url(image_path: Path) -> str:
     with open(image_path, "rb") as f:
@@ -183,7 +171,7 @@ def image_to_data_url(image_path: Path) -> str:
 def analyze_receipt(image_path: Path) -> dict:
     data_url = image_to_data_url(image_path)
 
-prompt = """
+    prompt = """
 あなたは日本の領収書・レシートを読み取る経費整理アシスタントです。
 
 画像から以下を抽出してください。
