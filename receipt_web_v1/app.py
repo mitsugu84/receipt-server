@@ -154,7 +154,7 @@ def resize_image_for_ai(image_path: Path, max_size: int = MAX_IMAGE_SIZE) -> Pat
         image.save(
             resized_path,
             "JPEG",
-            quality=90,
+            quality=85,
             optimize=True
         )
 
