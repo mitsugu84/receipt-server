@@ -41,10 +41,10 @@ ALLOWED_EXTENSIONS = {
 MAX_FILES_PER_UPLOAD = 4
 
 # コスト削減・メモリ削減のため800pxへ縮小
-MAX_IMAGE_SIZE = 800
+MAX_IMAGE_SIZE = 1200
 
 # JPEG圧縮率
-JPEG_QUALITY = 70
+JPEG_QUALITY = 85
 
 OPENAI_INPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_INPUT_PRICE_PER_1M", "0.15"))
 OPENAI_OUTPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_OUTPUT_PRICE_PER_1M", "0.60"))
@@ -136,7 +136,7 @@ def convert_heic_to_jpeg_if_needed(image_path: Path) -> Path:
         image.save(
             converted_path,
             "JPEG",
-            quality=JPEG_QUALITY,
+            quality=90,
             optimize=True
         )
 
@@ -154,7 +154,7 @@ def resize_image_for_ai(image_path: Path, max_size: int = MAX_IMAGE_SIZE) -> Pat
         image.save(
             resized_path,
             "JPEG",
-            quality=JPEG_QUALITY,
+            quality=85,
             optimize=True
         )
 
