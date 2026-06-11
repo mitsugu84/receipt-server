@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from flask import Flask, render_template, request, send_file, redirect, url_for, flash
+from flask import Flask, render_template, request, send_file, redirect, url_for, flash, session
 from werkzeug.utils import secure_filename
 from openai import OpenAI
 from supabase import create_client
@@ -24,9 +24,11 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-this-secret-key")
 
 UPLOAD_DIR = Path("uploads")
 OUTPUT_DIR = Path("outputs")
+SESSION_DIR = Path("sessions")
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
+SESSION_DIR.mkdir(exist_ok=True)
 
 ALLOWED_EXTENSIONS = {
     "jpg",
@@ -57,6 +59,58 @@ if SUPABASE_URL and SUPABASE_SECRET_KEY:
         print("Supabase connected")
     except Exception as e:
         print("Supabase connection error:", e)
+
+
+def get_session_id() -> str:
+    if "receipt_session_id" not in session:
+        session["receipt_session_id"] = uuid4().hex
+    return session["receipt_session_id"]
+
+
+def get_session_file_path() -> Path:
+    session_id = get_session_id()
+    return SESSION_DIR / f"{session_id}.json"
+
+
+def load_session_records() -> list[dict]:
+    path = get_session_file_path()
+
+    if not path.exists():
+        return []
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            records = json.load(f)
+
+        if isinstance(records, list):
+            return records
+
+        return []
+
+    except Exception as e:
+        print("Session load error:", e)
+        return []
+
+
+def save_session_records(records: list[dict]):
+    path = get_session_file_path()
+
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=2)
+
+    except Exception as e:
+        print("Session save error:", e)
+
+
+def clear_session_records():
+    path = get_session_file_path()
+
+    try:
+        if path.exists():
+            path.unlink()
+    except Exception as e:
+        print("Session clear error:", e)
 
 
 def estimate_cost_usd(prompt_tokens: int, completion_tokens: int) -> float:
@@ -398,7 +452,7 @@ def analyze():
         flash(f"一度にアップロードできるのは{MAX_FILES_PER_UPLOAD}枚までです。")
         return redirect(url_for("index"))
 
-    records = []
+    new_records = []
 
     try:
         for f in files:
@@ -423,7 +477,7 @@ def analyze():
                 resized_path = resize_image_for_ai(converted_path)
 
                 record = analyze_receipt(resized_path)
-                records.append(record)
+                new_records.append(record)
 
             finally:
                 delete_file_safely(save_path)
@@ -434,7 +488,11 @@ def analyze():
                 if resized_path and resized_path != converted_path:
                     delete_file_safely(resized_path)
 
-        excel_path = create_excel(records)
+        accumulated_records = load_session_records()
+        accumulated_records.extend(new_records)
+        save_session_records(accumulated_records)
+
+        excel_path = create_excel(accumulated_records)
 
     except Exception as e:
         flash(f"解析中にエラーが発生しました: {e}")
@@ -442,9 +500,16 @@ def analyze():
 
     return render_template(
         "result.html",
-        records=records,
+        records=accumulated_records,
         excel_filename=excel_path.name
     )
+
+
+@app.route("/reset", methods=["POST", "GET"])
+def reset():
+    clear_session_records()
+    flash("蓄積データをリセットしました。")
+    return redirect(url_for("index"))
 
 
 @app.route("/download/<filename>", methods=["GET"])
