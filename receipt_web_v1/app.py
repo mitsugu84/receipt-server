@@ -40,8 +40,6 @@ ALLOWED_EXTENSIONS = {
 }
 
 MAX_FILES_PER_UPLOAD = 4
-MAX_IMAGE_SIZE = 2200
-JPEG_QUALITY = 95
 
 OPENAI_INPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_INPUT_PRICE_PER_1M", "0.15"))
 OPENAI_OUTPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_OUTPUT_PRICE_PER_1M", "0.60"))
@@ -68,8 +66,7 @@ def get_session_id() -> str:
 
 
 def get_session_file_path() -> Path:
-    session_id = get_session_id()
-    return SESSION_DIR / f"{session_id}.json"
+    return SESSION_DIR / f"{get_session_id()}.json"
 
 
 def load_session_records() -> list[dict]:
@@ -81,12 +78,7 @@ def load_session_records() -> list[dict]:
     try:
         with open(path, "r", encoding="utf-8") as f:
             records = json.load(f)
-
-        if isinstance(records, list):
-            return records
-
-        return []
-
+        return records if isinstance(records, list) else []
     except Exception as e:
         print("Session load error:", e)
         return []
@@ -98,7 +90,6 @@ def save_session_records(records: list[dict]):
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(records, f, ensure_ascii=False, indent=2)
-
     except Exception as e:
         print("Session save error:", e)
 
@@ -185,34 +176,13 @@ def convert_heic_to_jpeg_if_needed(image_path: Path) -> Path:
         image.save(
             converted_path,
             "JPEG",
-            quality=90,
+            quality=95,
             optimize=True
         )
 
     print(f"HEIC converted -> {converted_path.name}")
 
     return converted_path
-
-
-def resize_image_for_ai(image_path: Path, max_size: int = MAX_IMAGE_SIZE) -> Path:
-    resized_path = image_path.with_name(f"{image_path.stem}_resized.jpg")
-
-    with Image.open(image_path) as image:
-        image = image.convert("RGB")
-        image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-        image.save(
-            resized_path,
-            "JPEG",
-            quality=JPEG_QUALITY,
-            optimize=True
-        )
-
-    print(
-        f"Image resized -> {resized_path.name} "
-        f"({max_size}px / quality={JPEG_QUALITY})"
-    )
-
-    return resized_path
 
 
 def image_to_data_url(image_path: Path) -> str:
@@ -459,14 +429,14 @@ def analyze():
             )
 
             converted_path = None
-            resized_path = None
 
             try:
                 f.save(save_path)
 
                 converted_path = convert_heic_to_jpeg_if_needed(save_path)
-                
-                record = analyze_receipt(resized_path)
+
+                # リサイズなしテスト版：変換後画像をそのままAIへ送る
+                record = analyze_receipt(converted_path)
                 new_records.append(record)
 
             finally:
@@ -474,8 +444,6 @@ def analyze():
 
                 if converted_path and converted_path != save_path:
                     delete_file_safely(converted_path)
-
-               resized_path = None
 
         accumulated_records = load_session_records()
         accumulated_records.extend(new_records)
