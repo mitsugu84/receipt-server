@@ -41,10 +41,10 @@ ALLOWED_EXTENSIONS = {
 MAX_FILES_PER_UPLOAD = 4
 
 # コスト削減・メモリ削減のため800pxへ縮小
-MAX_IMAGE_SIZE = 1200
+MAX_IMAGE_SIZE = 1800
 
 # JPEG圧縮率
-JPEG_QUALITY = 85
+JPEG_QUALITY = 95
 
 OPENAI_INPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_INPUT_PRICE_PER_1M", "0.15"))
 OPENAI_OUTPUT_PRICE_PER_1M = float(os.environ.get("OPENAI_OUTPUT_PRICE_PER_1M", "0.60"))
@@ -150,13 +150,20 @@ def resize_image_for_ai(image_path: Path, max_size: int = MAX_IMAGE_SIZE) -> Pat
 
     with Image.open(image_path) as image:
         image = image.convert("RGB")
-        image.thumbnail((max_size, max_size))
+        image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
         image.save(
             resized_path,
             "JPEG",
-            quality=85,
+            quality=JPEG_QUALITY,
             optimize=True
         )
+
+    print(
+        f"Image resized -> {resized_path.name} "
+        f"({max_size}px / quality={JPEG_QUALITY})"
+    )
+
+    return resized_path
 
     print(
         f"Image resized -> {resized_path.name} "
