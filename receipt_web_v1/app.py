@@ -465,8 +465,7 @@ def analyze():
                 f.save(save_path)
 
                 converted_path = convert_heic_to_jpeg_if_needed(save_path)
-                resized_path = resize_image_for_ai(converted_path)
-
+                
                 record = analyze_receipt(resized_path)
                 new_records.append(record)
 
@@ -476,8 +475,7 @@ def analyze():
                 if converted_path and converted_path != save_path:
                     delete_file_safely(converted_path)
 
-                if resized_path and resized_path != converted_path:
-                    delete_file_safely(resized_path)
+               resized_path = None
 
         accumulated_records = load_session_records()
         accumulated_records.extend(new_records)
